@@ -46,7 +46,7 @@ pub fn header_button(app: &mut FilmcraftApp, ui: &mut egui::Ui, track: TrackId, 
     let recording_here = app.session.voiceover.rec.as_ref().is_some_and(|x| x.track == track);
     let resp = ui.interact(r.intersect(visible), egui::Id::new(("vo", track.0)), Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(r, 2.0, t.hover);
+        ui.painter().with_clip_rect(visible).rect_filled(r, 2.0, t.hover);
     }
     let col = if recording_here { RED } else { t.text_dim };
     icons::paint(&ui.painter().with_clip_rect(visible), r.shrink(1.0), Icon::Mic, col);

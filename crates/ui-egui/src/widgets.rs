@@ -244,22 +244,27 @@ pub fn letter_toggle(ui: &mut Ui, rect: Rect, letter: &str, on: bool, on_color: 
     } else {
         Color32::TRANSPARENT
     };
-    ui.painter().rect_filled(rect, 2.0, bg);
+    // Paint clipped to `rect`: timeline header callers pass a row rect already intersected with
+    // the half it belongs to, so a scrolled-out track's button disappears with its row (#2538).
+    let p = ui.painter().with_clip_rect(rect);
+    p.rect_filled(rect, 2.0, bg);
     if !on {
-        ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0, t.separator), StrokeKind::Inside);
+        p.rect_stroke(rect, 2.0, Stroke::new(1.0, t.separator), StrokeKind::Inside);
     }
-    ui.painter().text(rect.center(), Align2::CENTER_CENTER, letter, Tokens::semibold(10.5), if on { Color32::BLACK } else { t.text_dim });
+    p.text(rect.center(), Align2::CENTER_CENTER, letter, Tokens::semibold(10.5), if on { Color32::BLACK } else { t.text_dim });
     resp
 }
 
 /// A flat icon toggle inside a rect.
 pub fn icon_toggle(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, t: &Tokens, id: egui::Id, on_color: Option<Color32>) -> Response {
     let resp = ui.interact(rect, id, Sense::click());
+    // Clipped to `rect` for the same reason as letter_toggle (#2538).
+    let p = ui.painter().with_clip_rect(rect);
     if resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, t.hover);
+        p.rect_filled(rect, 2.0, t.hover);
     }
     let col = if on { on_color.unwrap_or(t.icon) } else { t.text_faint };
-    icons::paint(ui.painter(), rect.shrink(rect.width() * 0.16), icon, col);
+    icons::paint(&p, rect.shrink(rect.width() * 0.16), icon, col);
     resp
 }
 
