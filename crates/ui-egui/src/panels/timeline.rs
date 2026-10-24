@@ -2399,11 +2399,15 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             // `pressed`, so the pan starts from where the button went down
             _ if resp.drag_started_by(egui::PointerButton::Middle) => {
                 let last = ctx.input(|i| i.pointer.press_origin()).unwrap_or(p);
-                Some(Drag::Pan { last, start_scroll: app.ui.timeline.target_scroll, start_v: app.ui.timeline.v_scroll, audio: last.y >= layout.split_y })
+                let audio = last.y >= layout.split_y;
+                let start_v = if audio { app.ui.timeline.a_scroll } else { app.ui.timeline.v_scroll };
+                Some(Drag::Pan { last, start_scroll: app.ui.timeline.target_scroll, start_v, audio })
             }
             (_, Grab::Other(Hit::Ruler)) => Some(Drag::Scrub { initial: app.session.playhead() }),
             (Tool::Hand, _) => {
-                Some(Drag::Pan { last: p, start_scroll: app.ui.timeline.target_scroll, start_v: app.ui.timeline.v_scroll, audio: p.y >= layout.split_y })
+                let audio = p.y >= layout.split_y;
+                let start_v = if audio { app.ui.timeline.a_scroll } else { app.ui.timeline.v_scroll };
+                Some(Drag::Pan { last: p, start_scroll: app.ui.timeline.target_scroll, start_v, audio })
             }
             (Tool::Zoom, _) => {
                 if resp.clicked() {
