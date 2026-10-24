@@ -71,3 +71,20 @@ fn adts_aac_imports_and_matches_ffmpeg() {
         assert!(d < 0.05, "channel {c}: max sample difference {d} against ffmpeg");
     }
 }
+
+/// A truncated ADTS stream must not import as a short success: `split_adts` stops at the
+/// damaged frame, and importing what parsed would silently drop the rest of the file (#2598).
+#[test]
+fn a_truncated_adts_stream_is_rejected() {
+    let ff = filmcraft_testkit::require_ffmpeg!();
+    let path = adts_stereo(&ff).expect("ffmpeg must build the ADTS fixture");
+    let stream = std::fs::read(&path).expect("fixture bytes");
+    // The whole fixture imports.
+    let full = filmcraft_codecs::AudioFileSource::decode("a.aac", stream.clone().into());
+    assert!(full.is_ok(), "the complete stream imports: {:?}", full.err());
+    // Cut mid-frame: the framing stops at the damaged frame, so the import must fail
+    // rather than report the surviving prefix as the whole file.
+    let cut = &stream[..stream.len() - stream.len() / 3];
+    let trunc = filmcraft_codecs::AudioFileSource::decode("a.aac", cut.to_vec().into());
+    assert!(trunc.is_err(), "a truncated stream is rejected, not imported short");
+}

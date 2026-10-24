@@ -799,13 +799,37 @@ pub struct AudioFileSource {
 /// header configures the decoder and each payload is one access unit. `None` when the stream does
 /// not start with ADTS frames (#1291: FilmCraft's own AAC export writes this, so the import had to
 /// read it).
-fn decode_adts_aac(bytes: &[u8]) -> Option<(u32, Vec<Vec<f32>>)> {
-    let frames = filmcraft_aac::split_adts(bytes).ok()?;
-    let mut dec = filmcraft_aac::Decoder::from_adts(&frames[0].0).ok()?;
+enum AdtsOutcome {
+    /// Framed and decoded completely.
+    Ok((u32, Vec<Vec<f32>>)),
+    /// The bytes are not an ADTS stream at all — leave them to the generic probe.
+    NotAdts,
+    /// ADTS framing that stops short of the end of the stream, or a frame that fails to
+    /// decode: importing what survived would silently drop the tail (#2598).
+    Damaged,
+}
+
+fn decode_adts_aac(bytes: &[u8]) -> AdtsOutcome {
+    let Ok(frames) = filmcraft_aac::split_adts(bytes) else {
+        return AdtsOutcome::NotAdts;
+    };
+    // `split_adts` stops at the first malformed or truncated frame and returns what
+    // parsed. Importing that as a complete file would silently drop the rest of the
+    // stream (#2598): require the framing to have consumed the whole input.
+    let consumed: usize = frames.iter().map(|(h, _)| h.frame_length).sum();
+    if consumed != bytes.len() {
+        return AdtsOutcome::Damaged;
+    }
+    let Ok(mut dec) = filmcraft_aac::Decoder::from_adts(&frames[0].0) else {
+        return AdtsOutcome::Damaged;
+    };
     let rate = dec.sample_rate();
     let mut samples: Vec<Vec<f32>> = Vec::new();
     for (_, au) in &frames {
-        let Ok(ch) = dec.decode(au) else { continue };
+        let Ok(ch) = dec.decode(au) else {
+            // A frame that parses in framing but will not decode is damage, not content.
+            return AdtsOutcome::Damaged;
+        };
         if samples.is_empty() {
             samples = vec![Vec::new(); ch.len().max(1)];
         }
@@ -815,7 +839,7 @@ fn decode_adts_aac(bytes: &[u8]) -> Option<(u32, Vec<Vec<f32>>)> {
             }
         }
     }
-    (!samples.is_empty()).then_some((rate, samples))
+    AdtsOutcome::Ok((rate, samples))
 }
 
 impl AudioFileSource {
@@ -837,21 +861,27 @@ impl AudioFileSource {
             };
             return Ok(Self { info, rate, samples });
         }
-        if ext == "aac"
-            && let Some((rate, samples)) = decode_adts_aac(&bytes)
-        {
-            let frames = samples.first().map_or(0, Vec::len);
-            let info = MediaInfo {
-                name: name.to_string(),
-                kind: MediaKind::AudioOnly,
-                duration: Tick::from_units(frames as i64, rate as i64),
-                video: None,
-                audio_streams: vec![AudioStreamInfo { sample_rate: rate, channels: samples.len() as u32, codec: "AAC".into(), bits_per_sample: None }],
-                container: ext.to_uppercase(),
-                start_timecode: None,
-                file_size: Some(bytes.len() as u64),
-            };
-            return Ok(Self { info, rate, samples });
+        if ext == "aac" {
+            match decode_adts_aac(&bytes) {
+                AdtsOutcome::Ok((rate, samples)) => {
+                    let frames = samples.first().map_or(0, Vec::len);
+                    let info = MediaInfo {
+                        name: name.to_string(),
+                        kind: MediaKind::AudioOnly,
+                        duration: Tick::from_units(frames as i64, rate as i64),
+                        video: None,
+                        audio_streams: vec![AudioStreamInfo { sample_rate: rate, channels: samples.len() as u32, codec: "AAC".into(), bits_per_sample: None }],
+                        container: ext.to_uppercase(),
+                        start_timecode: None,
+                        file_size: Some(bytes.len() as u64),
+                    };
+                    return Ok(Self { info, rate, samples });
+                }
+                // Truncated or undecodable ADTS: fail loudly instead of letting the generic
+                // probe import a short prefix as if it were the whole file (#2598).
+                AdtsOutcome::Damaged => return Err(CodecError::Unsupported("truncated or damaged ADTS stream".into())),
+                AdtsOutcome::NotAdts => {}
+            }
         }
         let mss = MediaSourceStream::new(Box::new(std::io::Cursor::new(bytes.clone())), Default::default());
         let mut hint = Hint::new();
