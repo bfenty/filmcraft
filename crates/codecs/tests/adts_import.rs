@@ -41,12 +41,17 @@ fn adts_stereo(ff: &std::path::Path) -> Option<std::path::PathBuf> {
 /// (the two decoders may place the AAC priming differently by a few samples).
 fn diff(a: &[f32], b: &[f32]) -> f32 {
     let len = a.len().min(b.len()).saturating_sub(64);
-    let mut worst = 0.0f32;
-    for i in 0..len {
-        for lag in -3..=3i64 {
+    // Best over a small lag either way (the two decoders may place the AAC priming
+    // differently by a few samples): each lag is scored on its own, and the most
+    // forgiving lag wins — mixing lags per sample would penalize a correct alignment.
+    let mut worst = f32::MAX;
+    for lag in -3..=3i64 {
+        let mut lag_worst = 0.0f32;
+        for i in 0..len {
             let j = (i as i64 + lag).clamp(0, b.len() as i64 - 1) as usize;
-            worst = worst.max((a[i] - b[j]).abs());
+            lag_worst = lag_worst.max((a[i] - b[j]).abs());
         }
+        worst = worst.min(lag_worst);
     }
     worst
 }
